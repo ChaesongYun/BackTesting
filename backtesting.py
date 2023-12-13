@@ -52,17 +52,59 @@ data = get_data(tickers_all)
 # 월말 데이터
 rebalance_data = get_rebalance_data(data)
 
+baa_g12 = pd.DataFrame(columns=tickers_all)
 baa_g4 = pd.DataFrame(columns=tickers_all)
 # [PDBC, VWO, BIL, IWM, LQD, TLT, EEM, SPY, EWJ, VEA, VGK, GLD, DBC, QQQ, IEF, VNQ, TIP, HYG, BND]
 res = []
 
 canary_data = rebalance_data[tickers_canary]
-profit = rebalance_data.pct_change() # (다음행-현재행) / 현재행
-n = 12
+profit = rebalance_data.pct_change()
+n=12
+for i in range(n, rebalance_data.shape[0]):
+    print(rebalance_data.index[i])
+    
+    # 1-3-6-12 점수 구하기
+    m1 = (canary_data.iloc[i]-canary_data.iloc[i-1])/canary_data.iloc[i-1]
+    m3 = (canary_data.iloc[i]-canary_data.iloc[i-3])/canary_data.iloc[i-3]
+    m6 = (canary_data.iloc[i]-canary_data.iloc[i-6])/canary_data.iloc[i-6]
+    m12 = (canary_data.iloc[i]-canary_data.iloc[i-12])/canary_data.iloc[i-12]
+    score = m1*12 + m3*4 + m6*2 +m12
 
+    buy = dict()
+    if min(score) <= 0: # 안전자산
+        safe = rebalance_data[tickers_safe].iloc[i] / rebalance_data[tickers_safe].iloc[i-n:i].mean()
+        safe_top3 = safe.nlargest(3)
+        for j in range(3):
+            try:
+                if safe_top3[j] > safe["BIL"]:
+                    name = safe_top3.index[j]
+                else:
+                    name = "BIL"
+                buy[name] += (1/3)*100
+            except:
+                buy[name] = (1/3)*100
+        
+    else: # 중도형(g12)
+        g12 = rebalance_data[tickers_g12].iloc[i] / rebalance_data[tickers_g12].iloc[i-n:i].mean()
+        g12_top6 = g12.nlargest(6)
+        for j in range(6):
+            buy[g12_top6.index[j]] = (1/6)*100 
+    
+    if i == n:
+        temp = pd.DataFrame([list(buy.values())], columns=list(buy.keys()), index = [rebalance_data.index[i]])
+        baa_g12 = pd.concat([baa_g12, temp])
+        res.append(100)
 
-# 모멘텀 스코어는 12개월 데이터가 쌓인 이후 계산 가능
-# 12부터 data행 개수만큼 for문
+    else:
+        total = sum(((1+profit.iloc[i])*baa_g12.iloc[-1]).fillna(0))
+        res.append(total)
+        # 비율을 어떻게 해서 투자했는지
+        temp = pd.DataFrame([list(buy.values())], columns=list(buy.keys()), index = [rebalance_data.index[i]]) * total / 100
+        baa_g12 = pd.concat([baa_g12, temp])
+
+baa_g12['Total'] = res     
+        
+res = []
 for i in range(n, rebalance_data.shape[0]):
     m1 = (canary_data.iloc[i]-canary_data.iloc[i-1])/canary_data.iloc[i-1]
     m3 = (canary_data.iloc[i]-canary_data.iloc[i-3])/[i-3]
@@ -100,7 +142,6 @@ for i in range(n, rebalance_data.shape[0]):
         temp = pd.DataFrame([list(buy.values())], columns=list(buy.keys()), index = [rebalance_data.index[i]]) * total / 100
         baa_g4 = pd.concat([baa_g4, temp])
 
-
 # 누적 수익률
 baa_g4["Total"] = res
 baa_g4['Daily_rtn'] = baa_g4['Total'].pct_change() # 단순 수익률
@@ -112,13 +153,13 @@ baa_g4['St_rtn'].plot()
 # CAGR
 total_year = len(set(baa_g4.index.year))
 CAGR = baa_g4['St_rtn'].iloc[-1] ** (1/total_year) - 1
-print('CAGR: ', CAGR)
+# print('CAGR: ', CAGR)
 
 # MDD
 historical_max = baa_g4['Total'].cummax() # 관측 기간 최고점 가격
 daily_drawdown = baa_g4['Total']/historical_max - 1 # 최고점에 비해 얼마나 떨어졌는가?
 MDD = daily_drawdown.cummin()
-print('MDD: ', MDD)
+# print('MDD: ', MDD)
 
 
 # SHARPE
@@ -126,4 +167,6 @@ print('MDD: ', MDD)
 # np.std: 표준편차, np.sqrt: 제곱근
 VOL = np.std(baa_g4['Daily_rtn']) * np.sqrt(len(baa_g4['Daily_rtn']))
 SHARPE = np.mean(baa_g4['Daily_rtn'])/ VOL
-print('SHARPE: ', SHARPE)
+# print('SHARPE: ', SHARPE)
+
+qs.reports.html(baa_g4['Total'], baa_g12['Total'], output='./strategy.html')
